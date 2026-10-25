@@ -8,7 +8,6 @@ import { spawn } from 'bun'; // Needed for running build
 import express, { Request, Response, NextFunction } from 'express';
 import http from 'http';
 import https from 'https'; // Import https
-import cors from 'cors';
 // --- End imports for --create-db ---
 
 // Corrected MCP SDK imports
@@ -40,7 +39,7 @@ async function startEhrFetchServer(
 ): Promise<void> {
     return new Promise(async (resolve, reject) => { // Make the outer function async for cert loading
         const app = express();
-        app.use(cors());
+        // No CORS: the retriever is served from this same origin, so cross-site pages must not be able to POST here.
         app.use(express.json({ limit: '50mb' })); // For receiving EHR data
 
         let server: http.Server | https.Server | null = null; // Union type
@@ -104,6 +103,12 @@ async function startEhrFetchServer(
         // Ensure this path matches the 'cli-callback' postUrl built into the retriever
         app.post('/ehr-data', async (req: Request, res: Response) => {
             console.error('[Server] /ehr-data received POST request.');
+            const requestOrigin = req.get('origin');
+            if (requestOrigin !== new URL(baseUrl).origin) {
+                console.error(`[Server] Rejecting /ehr-data POST from origin: ${requestOrigin}`);
+                res.status(403).json({ success: false, error: "forbidden_origin" });
+                return;
+            }
             try {
                 const clientFullEhr: ClientFullEHR = req.body;
                 // Basic validation
@@ -221,12 +226,39 @@ async function main() {
         // Add new mutually exclusive flags for handling existing DB in --create-db mode
         .option('--force-overwrite', 'If --db exists in --create-db mode, delete it before creating a new one.')
         .option('--force-concat', 'If --db exists in --create-db mode, add new data to the existing file.')
+        .option('--import-json <path>', 'Load a ClientFullEHR JSON file (e.g. the "Download Data (JSON)" export from the retriever) into a new --db file.')
         .parse(process.argv);
 
     const options = program.opts();
     const dbPath = path.resolve(options.db);
 
-    if (options.createDb) {
+    if (options.importJson) {
+        // --- Import JSON Mode ---
+        const jsonPath = path.resolve(options.importJson);
+        try {
+            await fs.access(dbPath);
+            console.error(`[CLI] Error: Database file "${dbPath}" already exists. Choose a new --db path.`);
+            process.exit(1);
+        } catch (accessError: any) {
+            if (accessError.code !== 'ENOENT') {
+                console.error(`[CLI] Error checking database path "${dbPath}": ${accessError.message}`);
+                process.exit(1);
+            }
+        }
+        const clientFullEhr: ClientFullEHR = JSON.parse(await fs.readFile(jsonPath, 'utf-8'));
+        if (!clientFullEhr || typeof clientFullEhr !== 'object' || !clientFullEhr.fhir || !Array.isArray(clientFullEhr.attachments)) {
+            console.error(`[CLI] Error: "${jsonPath}" is not a ClientFullEHR object (needs 'fhir' and 'attachments').`);
+            process.exit(1);
+        }
+        const db = new Database(dbPath);
+        try {
+            await ehrToSqlite(clientFullEhr, db);
+        } finally {
+            db.close();
+        }
+        console.error(`[CLI] Imported ${Object.values(clientFullEhr.fhir).flat().length} resources and ${clientFullEhr.attachments.length} attachments into ${dbPath}`);
+        process.exit(0);
+    } else if (options.createDb) {
         // --- Create DB Mode ---
         console.error('[CLI] Running in --create-db mode.');
 

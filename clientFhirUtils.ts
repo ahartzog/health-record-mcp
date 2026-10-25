@@ -579,6 +579,11 @@ export async function fetchAllEhrDataClientSideParallel(
 
 
         try {
+            // Never send the bearer token off the FHIR server's origin (absolute attachment URLs can point anywhere)
+            if (new URL(task.url).origin !== new URL(fhirBaseUrl).origin) {
+                throw new Error(`Refusing to fetch off-origin URL with access token: ${task.url}`);
+            }
+
             progressCallback(completedFetches, totalTasks, `Fetching: ${task.description}...`);
             // Use the dynamically set headers
             const response = await fetchWithTimeout(task.url, { headers: currentHeaders }, REQUEST_TIMEOUT_MS);

@@ -1,3 +1,10 @@
 static/dist
 node_modules
 .env
+
+# Never commit health data from this public fork
+data/
+*.sqlite
+*.sqlite-*
+ehr-data*.json
+*.pem

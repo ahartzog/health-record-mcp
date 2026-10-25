@@ -1080,27 +1080,9 @@ export function registerEhrTools(
         }
     );
 
-    mcpServer.tool(
-        "eval_record",
-        EvalRecordInputSchema.shape,
-        async (args, extra) => {
-            try {
-                const { fullEhr } = await getContext("eval_record", extra);
-                 if (!fullEhr) {
-                     throw new McpError(ErrorCode.InternalError, "EHR data context not found for this session/request.");
-                 }
-                console.error(`[TOOL eval_record] Context retrieved. Code length: ${args.code.length}`);
-                const resultString = await evalRecordLogic(fullEhr, args.code);
-                const isError = resultString.includes('"error":') || resultString.includes('Execution Error:');
-                return { content: [{ type: "text", text: resultString }], isError: isError };
-            } catch (error: any) {
-                console.error(`[TOOL eval_record] Error during context retrieval or execution:`, error);
-                 const errorMessage = error instanceof McpError ? error.message : `Internal server error: ${error.message}`;
-                const errorResult = JSON.stringify({ error: errorMessage });
-                return { content: [{ type: "text", text: errorResult }], isError: true };
-            }
-        }
-    );
+    // eval_record is intentionally not registered: node:vm is not a security boundary, and the
+    // sandbox exposes host objects (lodash, Buffer) whose constructors reach `process`. Record text
+    // is untrusted input to the calling LLM, so a prompt-injected note could otherwise run host code.
 
     mcpServer.tool(
         "read_resource",
